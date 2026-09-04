@@ -14,7 +14,7 @@ Convert a plan file's **remaining (unchecked) tasks** into a `batch.txt` that th
 message-queue extension imports. Each task runs in its own fresh session: the batch
 alternates a forced `/new` (restart context) with one `phx-work` invocation per task, so
 context never exceeds one task and every task starts clean. Every batch ends with the
-standard verification footer: `/test_coverage`, a forced `/new`, then `/verify_complete`.
+standard verification footer: a forced `/new`, then `/test_coverage`, then a forced `/new`, then `/verify_complete`.
 
 **Because the run is unattended, gate on unresolved items first.** A task that needs a
 decision the user never made will make the agent ask (or guess) in a session nobody is
@@ -79,9 +79,10 @@ containing **exactly one queued item per line**. First the tasks, one per select
 /skill:phx-work <plan-path> <N.M> only
 ```
 
-Then the **fixed verification footer** — always appended, exactly these three lines:
+Then the **fixed verification footer** — always appended, exactly these four lines:
 
 ```
+! /new
 /test_coverage
 ! /new
 /verify_complete
@@ -136,6 +137,7 @@ is exactly:
 /skill:phx-work .claude/plans/my-plan/plan.md 6.3 only
 ! /new
 /skill:phx-work .claude/plans/my-plan/plan.md 6.4 only
+! /new
 /test_coverage
 ! /new
 /verify_complete
@@ -143,9 +145,8 @@ is exactly:
 
 ## Notes
 
-- The footer runs `/test_coverage` in the last task's session, then starts a fresh session
-  for `/verify_complete`. If you want coverage in its own fresh session too, add a
-  `! /new` line before `/test_coverage`.
+- The footer starts a fresh session for `/test_coverage` in the last task's session, then also starts a fresh session
+  for `/verify_complete`. 
 - The audit catches what is unresolved **at import time**. A task can still raise a
   question or hit a blocker while it runs — an unattended batch is never a guarantee.
   Review the transcript when it finishes, and check whether your per-task invocation
