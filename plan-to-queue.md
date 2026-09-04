@@ -3,10 +3,11 @@ name: plan-to-queue
 description: Generate a pi message-queue batch file from a plan's remaining tasks, one task
   per fresh session (via forced /new separators). Audits the plan for open questions, design
   decisions, and blocked rows before generating, and gates on unresolved items. Optionally
-  appends /test_coverage (-t) and /verify_complete (-v), each in its own fresh session
-  (injected as a forced /new before the command). Use after /skill:phx-plan when you want
-  to run a plan unattended through the message queue. Output must be loaded with
-  /queue import.
+  appends /test_coverage (-t), /verify_complete (-v), and a final /skill:phx-review (-r),
+  each in its own fresh session (injected as a forced /new before the command). When -r is
+  passed, the phx-review command is always the very last command in the queue. Use after
+  /skill:phx-plan when you want to run a plan unattended through the message queue. Output
+  must be loaded with /queue import.
 ---
 
 # Plan → Queue Batch
@@ -14,11 +15,13 @@ description: Generate a pi message-queue batch file from a plan's remaining task
 Convert a plan file's **remaining (unchecked) tasks** into a `batch.txt` that the pi
 message-queue extension imports. Each task runs in its own fresh session: the batch
 alternates a forced `/new` (restart context) with one `phx-work` invocation per task, so
-context never exceeds one task and every task starts clean. The verification commands are
+context never exceeds one task and every task starts clean. The appended commands are
 **optional**: pass `-t` to append `/test_coverage`, `-v` to append `/verify_complete`, or
-`-tv`/`-vt` for both. Every verification command you append gets a forced `! /new`
-injected before it, so it runs in its own fresh session, matching the task pattern. With
-no flags, the batch is tasks only.
+`-r` to append a final `/skill:phx-review`. Every appended command gets a forced `! /new`
+injected before it, so it runs in its own fresh session, matching the task pattern.
+Appended commands run in a fixed file order — `/test_coverage`, then `/verify_complete`,
+then `/skill:phx-review` — so when `-r` is passed, the review is the very last command in
+the queue. With no flags, the batch is tasks only.
 
 **Because the run is unattended, gate on unresolved items first.** A task that needs a
 decision the user never made will make the agent ask (or guess) in a session nobody is
@@ -35,11 +38,14 @@ watching.
 | `plan-to-queue <plan.md> -t` | `/test_coverage` |
 | `plan-to-queue <plan.md> -v` | `/verify_complete` |
 | `plan-to-queue <plan.md> -tv` / `-vt` | `/test_coverage`, then `/verify_complete` |
+| `plan-to-queue <plan.md> -r` | `/skill:phx-review` — always the **last** command in the file |
 
-`-vt` is accepted as a synonym for `-tv`; the file order is always coverage first. The one
-catch: **every** verification command you request must be preceded by an injected `! /new`
-line (a forced add of `/new`), so it starts in its own fresh session rather than running in
-the last task's session.
+The letters combine in any order (`-tv`, `-vt`, `-tr`, `-rt`, `-rv`, `-vr`, `-tvr`, `-rvt`,
+...). The file order is always the same — `/test_coverage`, then `/verify_complete`, then
+`/skill:phx-review` — which makes `-vt` a synonym for `-tv` and keeps the review command
+last whenever `-r` is passed. The one catch: **every** appended command you request must be
+preceded by an injected `! /new` line (a forced add of `/new`), so it starts in its own
+fresh session rather than running in the last task's session.
 
 ## Step 1 — Audit the plan (MANDATORY, before anything else)
 
@@ -78,7 +84,7 @@ the user). Ignore sub-item ids with letters (`6.2a`), `[x]` done rows, `[BLOCKED
 rows, and all prose.
 
 If there are **no unchecked tasks**, tell the user the plan is complete; write a
-footer-only batch when verification flags were passed, otherwise write no batch at all.
+footer-only batch when any flags were passed, otherwise write no batch at all.
 
 ## Step 3 — Write `batch.txt`
 
@@ -95,15 +101,22 @@ containing **exactly one queued item per line**. First the tasks, one per select
 /skill:phx-work <plan-path> <N.M> only
 ```
 
-Then, **only for the flags passed**, append the verification commands — each one preceded
-by its own injected `! /new` line (a fresh session):
+Then, **only for the flags passed**, append the footer commands in the fixed order
+`/test_coverage` (`-t`), then `/verify_complete` (`-v`), then `/skill:phx-review` (`-r`) —
+the review always last. Each appended command is preceded by its own injected `! /new` line
+(a fresh session):
 
 - `-t` → append `! /new`, then `/test_coverage`
 - `-v` → append `! /new`, then `/verify_complete`
+- `-r` → append `! /new`, then `/skill:phx-review`
 - `-tv` / `-vt` → append `! /new`, `/test_coverage`, `! /new`, `/verify_complete`
+- any other combination → those blocks joined in the fixed order above, e.g. `-tvr` →
+  append `! /new`, `/test_coverage`, `! /new`, `/verify_complete`, `! /new`,
+  `/skill:phx-review`
 
-Never append a bare `/test_coverage` or `/verify_complete` — a verification command with no
-`! /new` directly above it would run inside the last task's session.
+Never append a bare `/test_coverage`, `/verify_complete`, or `/skill:phx-review` — an
+appended command with no `! /new` directly above it would run inside the last task's
+session.
 
 ### HARD RULES (a violation breaks the queue)
 
@@ -112,15 +125,18 @@ Never append a bare `/test_coverage` or `/verify_complete` — a verification co
   - `/skill:phx-work <plan-path> <N.M> only` — a task command.
   - `/test_coverage`, `/verify_complete` — verification commands, only when their flag
     (`-t` / `-v`) was passed.
+  - `/skill:phx-review` — the final review command, only when `-r` was passed, and only as
+    the last command line in the file.
   - a `#` comment line (only for the user-approved "run anyway" findings), or a blank line.
 - **Never** paste plan prose, task descriptions, bullet lists, or markdown into the file.
   A queued item is a single command line — not a paragraph. If a description would wrap
   across lines, it does not belong in the file.
 - Do not line-wrap anything. No trailing spaces. No other formatting.
-- Do not prefix task or verification commands with `!` — only `/new` separators are forced,
-  and each verification command sits directly under its own `! /new`.
+- Do not prefix task or appended commands with `!` — only `/new` separators are forced,
+  and each appended command sits directly under its own `! /new`.
 - The file ends with the last line you appended (the final task line when no flags, or the
-  final verification command); nothing comes after it.
+  final appended command); nothing comes after it. With `-r`, that final line is
+  `/skill:phx-review` — nothing may follow the review command.
 
 ## Step 4 — Verify (mandatory, before reporting done)
 
@@ -128,19 +144,25 @@ Re-read `batch.txt` and check:
 - every non-blank, non-comment line starts with `! ` or `/`;
 - the count of `/skill:phx-work` lines equals the number of selected tasks;
 - `/new` lines and task lines strictly alternate, starting with `! /new`;
-- every `/test_coverage` and `/verify_complete` line has a `! /new` line directly above it;
-- the tail matches the flags passed: `-t` → ends `! /new`, `/test_coverage`; `-v` → ends
-  `! /new`, `/verify_complete`; `-tv`/`-vt` → ends `! /new`, `/test_coverage`, `! /new`,
-  `/verify_complete`; no flags → ends with the last task command line.
+- every appended command line (`/test_coverage`, `/verify_complete`, `/skill:phx-review`)
+  has a `! /new` line directly above it;
+- the tail matches the flags passed: appended commands appear **only** in the fixed order
+  `/test_coverage` (`-t`), then `/verify_complete` (`-v`), then `/skill:phx-review` (`-r`),
+  each under its own `! /new` — no flags → ends with the last task command line; `-t` only
+  → ends `! /new`, `/test_coverage`; `-v` only → ends `! /new`, `/verify_complete`; `-r`
+  only → ends `! /new`, `/skill:phx-review`; `-tvr` → ends `! /new`, `/test_coverage`,
+  `! /new`, `/verify_complete`, `! /new`, `/skill:phx-review`;
+- with `-r`, `/skill:phx-review` is the file's final line — nothing comes after it.
 
 If any check fails, fix the file and re-verify.
 
 ## Step 5 — Report to the user
 
 State: the file path, the number of tasks queued, any tasks excluded or run with findings,
-the verification footer appended for the flags (`-t`: `/test_coverage`, `-v`:
-`/verify_complete`, `-tv`/`-vt`: both — each in its own fresh session; none without flags),
-and these two commands to run in pi:
+the footer appended for the flags (`-t`: `/test_coverage`, `-v`: `/verify_complete`,
+`-r`: a final `/skill:phx-review`; combinations append the flags' commands in that fixed
+order — each in its own fresh session; none without flags), and these two commands to run
+in pi:
 
 ```
 /queue import .claude/plans/<slug>/batch.txt
@@ -168,15 +190,27 @@ For `.claude/plans/my-plan/plan.md` with unchecked tasks `6.2`, `6.3`, `6.4`, in
 
 Called with **no flags**, the same batch stops after the last task line (`... 6.4 only`).
 With `-t` only it ends `... 6.4 only`, `! /new`, `/test_coverage`; with `-v` only it ends
-`... 6.4 only`, `! /new`, `/verify_complete`.
+`... 6.4 only`, `! /new`, `/verify_complete`. Adding `-r` (e.g. `-tvr`, `-rvt`, or `-r`
+alone) appends the review in its own fresh session after everything else:
+
+```
+! /new
+/skill:phx-review
+```
+
+The `/skill:phx-review` line is the very last line of the batch — nothing is queued after
+it.
 
 ## Notes
 
-- Each verification command runs in its own fresh session: a forced `! /new` is injected
-  before `/test_coverage` and a second one before `/verify_complete`, so neither ever runs
-  inside the last task's session.
+- Each appended command runs in its own fresh session: a forced `! /new` is injected
+  before `/test_coverage`, a second one before `/verify_complete`, and a third before
+  `/skill:phx-review`, so none ever runs inside the last task's session.
+- `-r` queues `/skill:phx-review` as the queue's final gate: a read-only review of the
+  changed code, scoped by the phx-review skill from git, so no plan argument is needed. It
+  never modifies the worktree.
 - A footer-only batch (flags passed but no unchecked tasks) is still valid to import: it is
-  just the injected `! /new` line followed by the requested verification command.
+  just the injected `! /new` line followed by the requested appended command(s).
 - The audit catches what is unresolved **at import time**. A task can still raise a
   question or hit a blocker while it runs — an unattended batch is never a guarantee.
   Review the transcript when it finishes, and check whether your per-task invocation

@@ -22,6 +22,8 @@ $ pi
 Queue is auto loaded and default LLM is used
 ```
 
-Verification is optional: append `-t` to also queue `/test_coverage`, `-v` to also queue
-`/verify_complete`, or `-tv`/`-vt` for both (each runs in its own fresh session via an
-injected `! /new`). Omit flags for a batch with the plan tasks only.
+Verification and review are optional: append `-t` to also queue `/test_coverage`, `-v` to
+also queue `/verify_complete`, or `-r` to finish with `/skill:phx-review` — always the very
+last command in the queue. Flags combine in any order (`-tv`, `-vt`, `-tr`, `-tvr`, ...);
+each appended command runs in its own fresh session via an injected `! /new`. Omit flags
+for a batch with the plan tasks only.
