@@ -2,7 +2,8 @@
 name: plan-to-queue
 description: Generate a pi message-queue batch file from a plan's remaining tasks, one task
   per fresh session (via forced /new separators). Audits the plan for open questions, design
-  decisions, and blocked rows before generating, and gates on unresolved items. Use after
+  decisions, and blocked rows before generating, and gates on unresolved items. Always ends
+  the batch with /test_coverage, a fresh session, and /verify_complete. Use after
   /skill:phx-plan when you want to run a plan unattended through the message queue. Output
   must be loaded with /queue import.
 ---
@@ -12,7 +13,8 @@ description: Generate a pi message-queue batch file from a plan's remaining task
 Convert a plan file's **remaining (unchecked) tasks** into a `batch.txt` that the pi
 message-queue extension imports. Each task runs in its own fresh session: the batch
 alternates a forced `/new` (restart context) with one `phx-work` invocation per task, so
-context never exceeds one task and every task starts clean.
+context never exceeds one task and every task starts clean. Every batch ends with the
+standard verification footer: `/test_coverage`, a forced `/new`, then `/verify_complete`.
 
 **Because the run is unattended, gate on unresolved items first.** A task that needs a
 decision the user never made will make the agent ask (or guess) in a session nobody is
@@ -22,11 +24,6 @@ watching.
 
 `/skill:plan-to-queue <plan.md>` — path relative to the pi session cwd, e.g.
 `.claude/plans/bulk-edit-queued-flow/plan.md`
-
-Optional trailer commands are appended (each in its own fresh session, matching the task
-pattern):
-
-`/skill:plan-to-queue <plan.md> /test_coverage /verify_complete`
 
 ## Step 1 — Audit the plan (MANDATORY, before anything else)
 
@@ -64,6 +61,10 @@ digits, dot, digits). Take **only unchecked** rows, in file order (minus any exc
 the user). Ignore sub-item ids with letters (`6.2a`), `[x]` done rows, `[BLOCKED]`-tagged
 rows, and all prose.
 
+If there are **no unchecked tasks**, tell the user the plan is complete and do not write a
+batch (there is nothing to run the footer against) — unless the user explicitly asks for a
+footer-only batch.
+
 ## Step 3 — Write `batch.txt`
 
 Resolve the plan path exactly as the pi session will see it (the same relative path you
@@ -71,46 +72,51 @@ were given, e.g. `.claude/plans/<slug>/plan.md`). Keep it identical on every lin
 rewrite or absolutize it.
 
 Write `batch.txt` in the plan's own directory (`.claude/plans/<slug>/batch.txt`),
-containing **exactly one queued item per line**, repeating once per selected task:
+containing **exactly one queued item per line**. First the tasks, one per selected task:
 
 ```
 ! /new
 /skill:phx-work <plan-path> <N.M> only
 ```
 
-Then, for each trailer command given as an argument, append:
+Then the **fixed verification footer** — always appended, exactly these three lines:
 
 ```
+/test_coverage
 ! /new
-<trailer-command>
+/verify_complete
 ```
 
 ### HARD RULES (a violation breaks the queue)
 
 - Every line of `batch.txt` is **exactly one of these forms and nothing else**:
   - `! /new` — the forced session-restart marker (bang, space, `/new`). Exactly.
-  - `/skill:phx-work <plan-path> <N.M> only` — the task command.
-  - `<trailer-command>` — a trailer you were explicitly asked to append.
+  - `/skill:phx-work <plan-path> <N.M> only` — a task command.
+  - `/test_coverage`, `/verify_complete` — the fixed footer commands.
   - a `#` comment line (only for the user-approved "run anyway" findings), or a blank line.
 - **Never** paste plan prose, task descriptions, bullet lists, or markdown into the file.
   A queued item is a single command line — not a paragraph. If a description would wrap
   across lines, it does not belong in the file.
 - Do not line-wrap anything. No trailing spaces. No other formatting.
-- Do not prefix task commands with `!` — only the `/new` separators are forced.
+- Do not prefix task commands or footer commands with `!` — only `/new` separators are
+  forced. The file always ends with the three footer lines above; nothing comes after
+  `/verify_complete`.
 
 ## Step 4 — Verify (mandatory, before reporting done)
 
 Re-read `batch.txt` and check:
 - every non-blank, non-comment line starts with `! ` or `/`;
 - the count of `/skill:phx-work` lines equals the number of selected tasks;
-- `/new` lines and task lines strictly alternate, starting with `! /new`.
+- `/new` lines and task lines strictly alternate, starting with `! /new`;
+- the last three lines are exactly `/test_coverage`, `! /new`, `/verify_complete`.
 
 If any check fails, fix the file and re-verify.
 
 ## Step 5 — Report to the user
 
 State: the file path, the number of tasks queued, any tasks excluded or run with findings,
-and these two commands to run in pi:
+the appended footer (`/test_coverage` → fresh session → `/verify_complete`), and these two
+commands to run in pi:
 
 ```
 /queue import .claude/plans/<slug>/batch.txt
@@ -119,8 +125,8 @@ and these two commands to run in pi:
 
 ## Example
 
-For `.claude/plans/my-plan/plan.md` with unchecked tasks `6.2`, `6.3`, `6.4` and trailer
-`/verify_complete`, `batch.txt` is exactly:
+For `.claude/plans/my-plan/plan.md` with unchecked tasks `6.2`, `6.3`, `6.4`, `batch.txt`
+is exactly:
 
 ```
 # my-plan remaining tasks — one per fresh session
@@ -130,12 +136,16 @@ For `.claude/plans/my-plan/plan.md` with unchecked tasks `6.2`, `6.3`, `6.4` and
 /skill:phx-work .claude/plans/my-plan/plan.md 6.3 only
 ! /new
 /skill:phx-work .claude/plans/my-plan/plan.md 6.4 only
+/test_coverage
 ! /new
 /verify_complete
 ```
 
 ## Notes
 
+- The footer runs `/test_coverage` in the last task's session, then starts a fresh session
+  for `/verify_complete`. If you want coverage in its own fresh session too, add a
+  `! /new` line before `/test_coverage`.
 - The audit catches what is unresolved **at import time**. A task can still raise a
   question or hit a blocker while it runs — an unattended batch is never a guarantee.
   Review the transcript when it finishes, and check whether your per-task invocation
