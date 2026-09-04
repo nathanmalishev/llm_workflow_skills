@@ -15,9 +15,13 @@ Then we can use the 'plan-to-queue' skill, this will generate a txt batch file. 
 $ pi
 | [using large model] /skill:phx-research You are a security expert adding OTP MFA to this application. Consider rate-limiting, security considerations, backup codes, and a nice user experience, with end to end testing. Write your findings to a research document
 | [using large model] /skill:phx-plan Create a plan for [researchdocument.md]
-| [using large model] /skill:plan-to-queue [plan.md]
+| [using large model] /skill:plan-to-queue [plan.md] -tv
 | [using large model] /queue import [batch.txt]
 
 
 Queue is auto loaded and default LLM is used
 ```
+
+Verification is optional: append `-t` to also queue `/test_coverage`, `-v` to also queue
+`/verify_complete`, or `-tv`/`-vt` for both (each runs in its own fresh session via an
+injected `! /new`). Omit flags for a batch with the plan tasks only.

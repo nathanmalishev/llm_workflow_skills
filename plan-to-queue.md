@@ -2,10 +2,11 @@
 name: plan-to-queue
 description: Generate a pi message-queue batch file from a plan's remaining tasks, one task
   per fresh session (via forced /new separators). Audits the plan for open questions, design
-  decisions, and blocked rows before generating, and gates on unresolved items. Always ends
-  the batch with /test_coverage, a fresh session, and /verify_complete. Use after
-  /skill:phx-plan when you want to run a plan unattended through the message queue. Output
-  must be loaded with /queue import.
+  decisions, and blocked rows before generating, and gates on unresolved items. Optionally
+  appends /test_coverage (-t) and /verify_complete (-v), each in its own fresh session
+  (injected as a forced /new before the command). Use after /skill:phx-plan when you want
+  to run a plan unattended through the message queue. Output must be loaded with
+  /queue import.
 ---
 
 # Plan → Queue Batch
@@ -13,8 +14,11 @@ description: Generate a pi message-queue batch file from a plan's remaining task
 Convert a plan file's **remaining (unchecked) tasks** into a `batch.txt` that the pi
 message-queue extension imports. Each task runs in its own fresh session: the batch
 alternates a forced `/new` (restart context) with one `phx-work` invocation per task, so
-context never exceeds one task and every task starts clean. Every batch ends with the
-standard verification footer: a forced `/new`, then `/test_coverage`, then a forced `/new`, then `/verify_complete`.
+context never exceeds one task and every task starts clean. The verification commands are
+**optional**: pass `-t` to append `/test_coverage`, `-v` to append `/verify_complete`, or
+`-tv`/`-vt` for both. Every verification command you append gets a forced `! /new`
+injected before it, so it runs in its own fresh session, matching the task pattern. With
+no flags, the batch is tasks only.
 
 **Because the run is unattended, gate on unresolved items first.** A task that needs a
 decision the user never made will make the agent ask (or guess) in a session nobody is
@@ -22,8 +26,20 @@ watching.
 
 ## Input
 
-`/skill:plan-to-queue <plan.md>` — path relative to the pi session cwd, e.g.
-`.claude/plans/bulk-edit-queued-flow/plan.md`
+`/skill:plan-to-queue <plan.md> [flags]` — plan path relative to the pi session cwd, e.g.
+`.claude/plans/bulk-edit-queued-flow/plan.md`, followed by optional flags:
+
+| Invocation | Queued after the tasks |
+| --- | --- |
+| `plan-to-queue <plan.md>` | *(none — tasks only)* |
+| `plan-to-queue <plan.md> -t` | `/test_coverage` |
+| `plan-to-queue <plan.md> -v` | `/verify_complete` |
+| `plan-to-queue <plan.md> -tv` / `-vt` | `/test_coverage`, then `/verify_complete` |
+
+`-vt` is accepted as a synonym for `-tv`; the file order is always coverage first. The one
+catch: **every** verification command you request must be preceded by an injected `! /new`
+line (a forced add of `/new`), so it starts in its own fresh session rather than running in
+the last task's session.
 
 ## Step 1 — Audit the plan (MANDATORY, before anything else)
 
@@ -61,9 +77,8 @@ digits, dot, digits). Take **only unchecked** rows, in file order (minus any exc
 the user). Ignore sub-item ids with letters (`6.2a`), `[x]` done rows, `[BLOCKED]`-tagged
 rows, and all prose.
 
-If there are **no unchecked tasks**, tell the user the plan is complete and do not write a
-batch (there is nothing to run the footer against) — unless the user explicitly asks for a
-footer-only batch.
+If there are **no unchecked tasks**, tell the user the plan is complete; write a
+footer-only batch when verification flags were passed, otherwise write no batch at all.
 
 ## Step 3 — Write `batch.txt`
 
@@ -72,36 +87,40 @@ were given, e.g. `.claude/plans/<slug>/plan.md`). Keep it identical on every lin
 rewrite or absolutize it.
 
 Write `batch.txt` in the plan's own directory (`.claude/plans/<slug>/batch.txt`),
-containing **exactly one queued item per line**. First the tasks, one per selected task:
+containing **exactly one queued item per line**. First the tasks, one per selected task
+(none, in a footer-only batch):
 
 ```
 ! /new
 /skill:phx-work <plan-path> <N.M> only
 ```
 
-Then the **fixed verification footer** — always appended, exactly these four lines:
+Then, **only for the flags passed**, append the verification commands — each one preceded
+by its own injected `! /new` line (a fresh session):
 
-```
-! /new
-/test_coverage
-! /new
-/verify_complete
-```
+- `-t` → append `! /new`, then `/test_coverage`
+- `-v` → append `! /new`, then `/verify_complete`
+- `-tv` / `-vt` → append `! /new`, `/test_coverage`, `! /new`, `/verify_complete`
+
+Never append a bare `/test_coverage` or `/verify_complete` — a verification command with no
+`! /new` directly above it would run inside the last task's session.
 
 ### HARD RULES (a violation breaks the queue)
 
 - Every line of `batch.txt` is **exactly one of these forms and nothing else**:
   - `! /new` — the forced session-restart marker (bang, space, `/new`). Exactly.
   - `/skill:phx-work <plan-path> <N.M> only` — a task command.
-  - `/test_coverage`, `/verify_complete` — the fixed footer commands.
+  - `/test_coverage`, `/verify_complete` — verification commands, only when their flag
+    (`-t` / `-v`) was passed.
   - a `#` comment line (only for the user-approved "run anyway" findings), or a blank line.
 - **Never** paste plan prose, task descriptions, bullet lists, or markdown into the file.
   A queued item is a single command line — not a paragraph. If a description would wrap
   across lines, it does not belong in the file.
 - Do not line-wrap anything. No trailing spaces. No other formatting.
-- Do not prefix task commands or footer commands with `!` — only `/new` separators are
-  forced. The file always ends with the three footer lines above; nothing comes after
-  `/verify_complete`.
+- Do not prefix task or verification commands with `!` — only `/new` separators are forced,
+  and each verification command sits directly under its own `! /new`.
+- The file ends with the last line you appended (the final task line when no flags, or the
+  final verification command); nothing comes after it.
 
 ## Step 4 — Verify (mandatory, before reporting done)
 
@@ -109,15 +128,19 @@ Re-read `batch.txt` and check:
 - every non-blank, non-comment line starts with `! ` or `/`;
 - the count of `/skill:phx-work` lines equals the number of selected tasks;
 - `/new` lines and task lines strictly alternate, starting with `! /new`;
-- the last three lines are exactly `/test_coverage`, `! /new`, `/verify_complete`.
+- every `/test_coverage` and `/verify_complete` line has a `! /new` line directly above it;
+- the tail matches the flags passed: `-t` → ends `! /new`, `/test_coverage`; `-v` → ends
+  `! /new`, `/verify_complete`; `-tv`/`-vt` → ends `! /new`, `/test_coverage`, `! /new`,
+  `/verify_complete`; no flags → ends with the last task command line.
 
 If any check fails, fix the file and re-verify.
 
 ## Step 5 — Report to the user
 
 State: the file path, the number of tasks queued, any tasks excluded or run with findings,
-the appended footer (`/test_coverage` → fresh session → `/verify_complete`), and these two
-commands to run in pi:
+the verification footer appended for the flags (`-t`: `/test_coverage`, `-v`:
+`/verify_complete`, `-tv`/`-vt`: both — each in its own fresh session; none without flags),
+and these two commands to run in pi:
 
 ```
 /queue import .claude/plans/<slug>/batch.txt
@@ -126,8 +149,8 @@ commands to run in pi:
 
 ## Example
 
-For `.claude/plans/my-plan/plan.md` with unchecked tasks `6.2`, `6.3`, `6.4`, `batch.txt`
-is exactly:
+For `.claude/plans/my-plan/plan.md` with unchecked tasks `6.2`, `6.3`, `6.4`, invoked with
+`-tv` (or `-vt`), `batch.txt` is exactly:
 
 ```
 # my-plan remaining tasks — one per fresh session
@@ -143,10 +166,17 @@ is exactly:
 /verify_complete
 ```
 
+Called with **no flags**, the same batch stops after the last task line (`... 6.4 only`).
+With `-t` only it ends `... 6.4 only`, `! /new`, `/test_coverage`; with `-v` only it ends
+`... 6.4 only`, `! /new`, `/verify_complete`.
+
 ## Notes
 
-- The footer starts a fresh session for `/test_coverage` in the last task's session, then also starts a fresh session
-  for `/verify_complete`. 
+- Each verification command runs in its own fresh session: a forced `! /new` is injected
+  before `/test_coverage` and a second one before `/verify_complete`, so neither ever runs
+  inside the last task's session.
+- A footer-only batch (flags passed but no unchecked tasks) is still valid to import: it is
+  just the injected `! /new` line followed by the requested verification command.
 - The audit catches what is unresolved **at import time**. A task can still raise a
   question or hit a blocker while it runs — an unattended batch is never a guarantee.
   Review the transcript when it finishes, and check whether your per-task invocation
